@@ -2,5 +2,7 @@
 .netlify
 .env
 node_modules
+stripe-webhook copy.js
+test.json
 
 

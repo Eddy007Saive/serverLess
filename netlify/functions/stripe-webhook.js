@@ -38,56 +38,64 @@ exports.handler = async (event, context) => {
       };
     }
     
-    // SOLUTION PRINCIPALE : Gérer le corps selon le contexte
+    // CORRECTION PRINCIPALE : Gérer le body selon l'encodage
     let body;
     
-    // En développement local avec Netlify Dev
-    if (process.env.NODE_ENV !== 'production' && typeof event.body === 'string') {
-      // Netlify Dev peut parser le JSON, on essaie de le récupérer
-      try {
-        // Si c'est déjà un string JSON, on l'utilise directement
-        body = event.body;
-        console.log('Utilisation du body string directement');
-      } catch (e) {
-        console.log('Erreur parsing body:', e.message);
-        body = event.body;
-      }
-    } else if (event.isBase64Encoded) {
-      // En production, si c'est encodé en base64
+    if (event.isBase64Encoded) {
+      // Décodage base64 (cas le plus courant en production Netlify)
       body = Buffer.from(event.body, 'base64').toString('utf8');
       console.log('Décodage base64 effectué');
     } else {
-      // Utilisation directe
+      // Utilisation directe du body (déjà en string)
       body = event.body;
       console.log('Utilisation directe du body');
     }
     
     console.log('Body final length:', body?.length);
+    console.log('Body first 100 chars:', body?.substring(0, 100));
     
-    // ALTERNATIVE : Désactiver la vérification en développement
+    // VÉRIFICATION DE LA SIGNATURE EN PRODUCTION
     let stripeEvent;
     
-    if (process.env.NODE_ENV === 'development' || process.env.NETLIFY_DEV === 'true') {
-      console.log('🔧 Mode développement - Parsing direct du JSON');
-      try {
-        const parsedBody = JSON.parse(body);
-        stripeEvent = parsedBody;
-        console.log('✅ JSON parsé avec succès:', stripeEvent.type);
-      } catch (e) {
-        console.log('❌ Erreur parsing JSON:', e.message);
-        return {
-          statusCode: 400,
-          body: JSON.stringify({ error: 'Invalid JSON' })
-        };
-      }
-    } else {
-      // En production, vérification normale
-      console.log('🔒 Mode production - Vérification signature');
+    try {
+      console.log('🔒 Vérification signature Stripe');
       stripeEvent = stripe.webhooks.constructEvent(
         body,
         sig,
         webhookSecret
       );
+      console.log('✅ Signature vérifiée avec succès');
+    } catch (signatureError) {
+      console.error('❌ Erreur vérification signature:', signatureError.message);
+      
+      // DEBUG SUPPLÉMENTAIRE
+      console.log('Body type final:', typeof body);
+      console.log('Body length:', body?.length);
+      console.log('Signature header:', sig);
+      
+      // Essayer avec Buffer si c'est un string
+      if (typeof body === 'string') {
+        try {
+          console.log('🔄 Tentative avec Buffer');
+          stripeEvent = stripe.webhooks.constructEvent(
+            Buffer.from(body, 'utf8'),
+            sig,
+            webhookSecret
+          );
+          console.log('✅ Signature vérifiée avec Buffer');
+        } catch (bufferError) {
+          console.error('❌ Erreur avec Buffer aussi:', bufferError.message);
+          return {
+            statusCode: 400,
+            body: JSON.stringify({ error: 'Webhook signature verification failed' })
+          };
+        }
+      } else {
+        return {
+          statusCode: 400,
+          body: JSON.stringify({ error: 'Webhook signature verification failed' })
+        };
+      }
     }
 
     console.log('✅ Événement traité:', stripeEvent.type);
@@ -144,6 +152,7 @@ exports.handler = async (event, context) => {
   }
 };
 
+// Reste de vos fonctions inchangées...
 async function handleCheckoutSessionCompleted(session) {
   try {
     console.log('Session checkout terminée:', session.id);
